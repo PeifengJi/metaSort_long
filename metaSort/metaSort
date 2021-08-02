@@ -1,0 +1,498 @@
+#!/usr/bin/env python
+
+###############################################################################
+#
+# MetaSort - main program entry point. 
+#
+###############################################################################
+#                                                                             #
+#    This program is free software: you can redistribute it and/or modify     #
+#    it under the terms of the GNU General Public License as published by     #
+#    the Free Software Foundation, either version 3 of the License, or        #
+#    (at your option) any later version.                                      #
+#                                                                             #
+#    This program is distributed in the hope that it will be useful,          #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of           #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the            #
+#    GNU General Public License for more details.                             #
+#                                                                             #
+#    You should have received a copy of the GNU General Public License        #
+#    along with this program. If not, see <http://www.gnu.org/licenses/>.     #
+#                                                                             #
+###############################################################################
+
+__author__ = "Peifeng Ji"
+__copyright__ = "Copyright 2016"
+__license__ = "GPL3"
+__maintainer__ = "Peifeng Ji"
+__email__ = "theonejpf@gmail.com"
+__status__ = "Development"
+
+import os
+import sys
+scaf_dirpath = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
+sys.path.append(scaf_dirpath)
+sys.path.append(os.path.join(scaf_dirpath, 'libs'))
+import config
+config.check_python_version()
+import shutil
+import multiprocessing
+import argparse
+from customHelpFormatter import CustomHelpFormatter
+from log import get_logger
+
+def version():
+    versionFile = open(os.path.join(scaf_dirpath, 'libs', 'VERSION'))
+    return versionFile.read().strip()
+
+def printHelp():
+    print ''
+    print '                ...::: MetaSort v' + version() + ' :::...'''
+    print '''\
+    
+  Select the following module for analysis:
+  
+    build   -> Building database based on the scaffolds and read files for fab and mga.
+    
+    fab     -> Fishing and binning the sequences of meta-S to generate bins of target genomes.
+    
+    mga     -> Recovering and assembling the target genome.
+'''
+
+def main():
+    
+    # initialize the parser
+    parser = argparse.ArgumentParser(add_help=False)
+    subparsers = parser.add_subparsers(help="--", dest='subparser_name')
+    
+    # add the data parser
+    data_parser = subparsers.add_parser('build',
+                                        formatter_class=CustomHelpFormatter,
+                                        description='Building database for fab and mga',
+                                        epilog='Examples: metasort build -d meta_o -b scaffolds.fa -l lib.config -t 8'
+                                        )
+    group = data_parser.add_mutually_exclusive_group()
+    group.add_argument('-b', '--metaO',
+                        dest = 'metaO',
+                        action = 'store',
+                        default = False,
+                        help = 'The metaO scaffolds file',
+                        )
+    data_parser.add_argument('-d', '--database',
+                             dest = 'database',
+                             action = 'store',
+                             required = True,
+                             help = 'Directory path for storing database of metaO'
+                             )
+    data_parser.add_argument('-l', '--libs',
+                             dest='libfn',
+                             required = True,
+                             help='The config file used for metaO assembly',
+                             )
+    data_parser.add_argument('-t', '--cpu',
+                            dest='threads',
+                            default=multiprocessing.cpu_count(),
+                            type=str,
+                            help="CPU number of running"
+                            )
+    
+    # add the fab parser
+    fab_parser = subparsers.add_parser('fab',
+                                        formatter_class=CustomHelpFormatter,
+                                        description='Performing the FAB algorithm',
+                                        epilog='Example: metasort fab -d meta_o -s metaS_fn -p meta_s -l lib.config -t 8'
+                                        )
+    fab_parser.add_argument('-d', '--database',
+                            dest='database',
+                            action="store",
+                            required=True,
+                            help="Directory path for storing database of metaO"
+                            )
+    fab_parser.add_argument('-s', '--metaS',
+                            dest='ref',
+                            action="store",
+                            required=True,
+                            help="The meta-S scaffolds (FASTA format)"
+                            )
+    fab_parser.add_argument('-p', '--project',
+                            dest='project',
+                            action="store",
+                            required=True,
+                            help="The directory path for storing the meta-S data"
+                            )
+    fab_parser.add_argument('-t', '--cpu',
+                            dest='threads',
+                            default=multiprocessing.cpu_count(),
+                            type=str,
+                            help="CPU number of running"
+                            )
+    
+    # add the mga parser
+    mga_parser = subparsers.add_parser('mga',
+                                        formatter_class=CustomHelpFormatter,
+                                        description='Performing the MGA algorithm',
+                                        epilog='Example: metasort mga -d soap_dir -p meta_s -g bin1.fa -o out -t 8')
+    mga_parser.add_argument('-d', '--database',
+                            dest='database',
+                            action="store",
+                            required=True,
+                            help="Directory path for storing database of metaO")
+    mga_parser.add_argument('-p', '--project',
+                            dest='project',
+                            action="store",
+                            required=True,
+                            help="The directory name for storing the meta-S analysis data")
+    mga_parser.add_argument('-g', '--genome',
+                            dest='clf',
+                            action="store",
+                            required=True,
+                            help="The target genome sequences (FASTA format)")
+    mga_parser.add_argument('-o', '--output',
+                            dest='outdir',
+                            action="store",
+                            required=True,
+                            help="Output directory to store the results")
+    mga_parser.add_argument('-r', '--recover',
+                            dest='recoverSwith',
+                            type=int,
+                            help='''Recovery step flag
+0. Do not perform recovery step to get the remaining TG contigs in meta-O
+1. Perform recovery step to get the remaining TG contigs in meta-O ''',
+                            default=0,
+                            choices = [0, 1])
+    mga_parser.add_argument('-t', '--cpu',
+                            dest='threads',
+                            default=multiprocessing.cpu_count(),
+                            type=str,
+                            help="CPU number of running")
+    
+    args = None
+    if(len(sys.argv) == 1 or sys.argv[1] == '-h' or sys.argv == '--help'):
+        printHelp()
+        sys.exit(0)
+    else:
+        args = parser.parse_args()
+    
+    if args.subparser_name == 'build':
+        # set log file
+        logger = get_logger(config.logBUILD)
+        logger.set_up_console_handler(debug=config.DEBUG)
+        # setting file handle
+        curDir = os.getcwd()
+        logger.set_up_file_handler(curDir)
+        # import modules
+        import prepareData
+        import initialize
+        import decompose
+        
+        metaO = os.path.abspath(args.metaO)
+        database = os.path.abspath(args.database)
+        libfn = os.path.abspath(args.libfn)
+        # recording
+        logger.info('cmd:\n     metaSort build -d {0} -b {1} -l {2} -t {3}'.format(
+                        database, metaO, libfn, args.threads))
+        # check directory and files
+        if not os.path.exists(metaO) or not os.path.getsize(metaO):
+            logger.error('Scaffolds file is not exists or file size is zero. Please re-check it!'.format(metaO),
+                        to_stderr=True,
+                        exit_with_code=3
+                        )
+        if not os.path.exists(libfn) or not os.path.getsize(libfn):
+            logger.error('Sam file is not exists or file size is zero. Please re-check it!'.format(libfn),
+                        to_stderr=True,
+                        exit_with_code=3
+                        )
+        
+        # analysis start
+        logger.start()
+        # logging parameters
+        logger.info('\nImporting parameters:\n')
+        logger.info('  Database directory:              {0}'.format(database))
+        logger.info('  meta-O file:                     {0}'.format(metaO))
+        logger.info('  Lib config file:                 {0}'.format(libfn))
+        logger.info('  Threads number:                  {0}'.format(args.threads))
+        logger.info()
+        
+        # check if the database directory is already created and the files
+        if not os.path.isdir(database):
+            os.makedirs(database)
+        os.chdir(database)
+        
+        # prepare files, creating soap like files
+        logger.print_timestamp()
+        stone = initialize.SOAPtransformer(metaO, libfn, args.threads)
+        stone.trans()
+        logger.print_timestamp()
+        
+        # load SOAPdenovo assembly data
+        logger.info('Loading data ...')
+        soap = prepareData.SOAP(database, args.threads)
+        soap.loadData(samFn=stone.samFiles.values()[0])
+        logger.info('Loading done and the prepared files are written into : {}\n'.format(soap.database))
+        
+        # decomopose the graph
+        logger.info('Decomposing the graph ...')
+        disconnect = decompose.decomposition(soap, args.threads)
+        disconnect.partition()
+        logger.info('Decomposition done!')
+        os.chdir(curDir)
+        
+        # finishing the databse constructin processes
+        logger.finish_up(check_test=False)
+    elif args.subparser_name == 'fab':
+        
+        # set log file
+        logger = get_logger(config.logFAB)
+        logger.set_up_console_handler(debug=config.DEBUG)
+        
+        # import modules
+        import prepareData
+        import mapper
+        import binning
+        import decompose
+        
+        # setting file handle
+        curDir = os.getcwd()
+        logger.set_up_file_handler(curDir)
+        
+        # get abs paths
+        database = os.path.abspath(args.database)
+        spadesfn = os.path.abspath(args.ref)
+        projectDir = os.path.abspath(args.project)
+        logger.info('cmd:\n     metaSort fab -d {0} -s {1} -p {2} -t {3}'.format(
+            database, spadesfn, projectDir, args.threads))
+        
+        # check meta-S fn
+        if not os.path.exists(spadesfn) or not os.path.getsize(spadesfn):
+            logger.error('Meta-S scaffolds file does not exist or file size is zero. Please re-check it!'.format(spadesfn),
+                        to_stderr=True,
+                        exit_with_code=3
+                        )
+        
+        # analysis start
+        logger.start()
+        
+        # logging parameters
+        logger.info('\nImporting parameters:\n')
+        logger.info('  Database directory:          {0}'.format(database))
+        logger.info('  meta-S scaffolds:            {0}'.format(spadesfn))
+        logger.info('  The project directory:       {0}'.format(projectDir))
+        logger.info('  Threads number:              {0}'.format(args.threads))
+        logger.info('  Nucmer: mincluster:          {0}'.format(config.mincluster))
+        logger.info('  Breaking: window size:{0}, min scaffolds length = {1}, output = {2}'.format(
+                    config.winSize, config.minECLen, config.errFreefn))
+        logger.info('  Binning: merge level = {0}, min scaffolds length = {1}'.format(config.MERGELEVEL,config.metaS_minLen))
+        logger.info()
+        
+        # break the long scaffolds
+        logger.print_timestamp()
+        worker = prepareData.BAFchecker(projectDir)
+        
+        # error correction of the mda assembled scaffolds
+        os.chdir(projectDir)
+        worker.ec(spadesfn)
+        logger.info('Error breaking done!')
+        
+        # load SOAPdenovo assembly data
+        logger.print_timestamp()
+        logger.info('Loading data ...')
+        soap = prepareData.SOAP(database, args.threads)
+        soap.loadData()
+        logger.info('Loading done and the prepared files are written into : {}\n'.format(database))
+        
+        # fishing
+        logger.print_timestamp()
+        logger.info('Start mapping ...')
+        nucmerPrefix = os.path.join(worker.metaSdir, config.NUCMER)
+        nucmerRes = nucmerPrefix + '.result'
+        if not os.path.exists(nucmerRes) or not os.path.getsize(nucmerRes):
+            mapper.pipeline(worker.erfn, soap.contigfile, nucmerPrefix)
+        else:
+            logger.warning('Alignment file exists, skipping!')
+        logger.info('Mapping done!')
+        
+        # analysis the nucmer mapping info, build mapping clusters
+        logger.print_timestamp()
+        logger.info('Start fishing ...')
+        extendCls, identity, guildlinks = binning.nucmerPaser(nucmerRes)
+        logger.info('Fishing done!')
+        
+        # binning the clusters
+        logger.print_timestamp()
+        logger.info('Start binning ...')
+        mdaCls = binning.MDAbinning(worker.erfn, soap, args.threads)
+        returnCode = binning.fishing(extendCls, mdaCls, worker.erfn, soap)
+        
+        # move the clseqs to upper directory
+        if returnCode:
+          try:
+              shutil.move(os.path.join(worker.metaSdir, config.CLUSTERSEQDIR), curDir)
+          except:
+              shutil.rmtree(config.CLUSTERSEQDIR)
+              shutil.move(os.path.join(worker.metaSdir, config.CLUSTERSEQDIR), curDir)
+          logger.info('Binning done!')
+        else:
+          logger.warning('No binning results are generated!')
+        
+        # write the mapping analysis file into MGA directory
+        logger.print_timestamp()
+        worker.writeFns(guildlinks, extendCls, identity)
+        logger.info('Files are written!\n')
+        
+        # copy the log file to metaS dir for later checking
+        logger.finish_up(check_test=False)
+        os.chdir(curDir)
+        shutil.copy(config.logFAB + '.log', worker.metaSdir)
+    elif args.subparser_name == 'mga':
+        
+        # set log file
+        logger = get_logger(config.logMGA)
+        logger.set_up_console_handler(debug=True)
+        
+        import prepareData
+        import simplify
+        import scaffolding
+        import decrease
+        import pathRecover
+        
+        database = os.path.abspath(args.database)
+        clfn = os.path.abspath(args.clf)
+        projectDir = os.path.abspath(args.project)
+        
+        # create new dir for new project
+        outdir = os.path.abspath(args.outdir)
+        if os.path.isdir(outdir):
+            shutil.rmtree(outdir)
+        os.makedirs(outdir)
+        os.chdir(outdir)
+        
+        # set the log file 
+        logger.set_up_file_handler(outdir)
+        
+        # log the command line
+        logger.info('cmd:\n     metaSort mga -d {0} -p {1} -g {2} -r {3} -o {4} -t {5}'.format(
+                    database, projectDir, clfn, 
+                    args.recoverSwith, args.outdir, args.threads
+                    ))
+        
+        # start to analysis
+        logger.start()
+        
+        # logging parameters
+        logger.info('\nImporting parameters:')
+        logger.info('  Database directory:          {0}'.format(database))
+        logger.info('  The project directory:       {0}'.format(projectDir))
+        logger.info('  Recovery swith:              {0}'.format(args.recoverSwith))
+        logger.info('  Threads number:              {0}'.format(args.threads))
+        logger.info('  The TG sequences:            {0}'.format(clfn))
+        logger.info('  The length cutoff of seed scaffolds: {0}'.format(config.MDAlenCf))
+        logger.info()
+        
+        # check paras files
+        worker = prepareData.BAFchecker(projectDir)
+        worker.checkFns()
+        
+        # load FAB files
+        logger.info()
+        soap = prepareData.SOAP(database, args.threads)
+        soap.oneStrandCovLen()
+        paras = prepareData.Paras(clfn, worker.metaSdir)
+        paras.loadData(soap)
+        
+        # get the fraction of shared kmers
+        logger.print_timestamp()
+        logger.info('Checking if TG is included by meta-O ...')
+        
+        # if using SOAPdenovo scaffolds 
+        #fraction = 1 if paras.marker == 's' else soap.kmerCMP(paras)
+        fraction = 1
+        if  fraction >= config.SPECIES:
+            logger.info('Shared kmer fraction is high, going on ...')
+        else:
+            logger.warning('Shared kmer fraction is low, maybe the TG is not or partially included by meta-O !')
+        
+        candidates = decrease.getGNodes(soap, paras, args.threads) if args.recoverSwith else set()
+        
+        # load graphs
+        logger.print_timestamp()
+        logger.info('Loading graphs ...')
+        soap.loadData()
+        if not soap.update: logger.warning('The graph is not updated!\nGoing on ...')
+        logger.info('Loading done!')
+        
+        # because the high sensativity and accuracy of SVM for large contig, take them as mappedNodes
+        mappedNodes = set([k for i in paras.nodes for k in i, soap.revNode(i)])
+        candidates.update([i+1 for i in candidates if soap.index[i]==0])
+        
+        # searching and link the nodes on the graph, using a dynamic system)
+        logger.print_timestamp()
+        logger.info('Searching on the graphs ...')
+        # pre-assembly to get a ref scaffold
+        if candidates:
+            targetGraph = pathRecover.genomeGraph(soap, mappedNodes, set(), step=1)
+            dSin, dpath = scaffolding.dPaths(targetGraph, soap)
+            if paras.meanLen > 2000:
+                delNodes = scaffolding.delCands(soap, dpath, mappedNodes, candidates, lc=5000, ic=0.55)
+            else:
+                delNodes = scaffolding.delCands(soap, dpath, mappedNodes, candidates, lc=1000, ic=0.55)
+            candidates = candidates - delNodes
+        
+        targetGraph = pathRecover.genomeGraph(soap, mappedNodes, candidates, step=2)
+        
+        logger.info('Searching done!\n')
+        # variation finding and removing
+        logger.info('Finding variations on the graph...')
+        logger.print_timestamp()
+        for key in paras.identity.keys():
+            paras.identity[soap.revNode(key)] = paras.identity[key]
+        
+        simplify.merge(targetGraph, soap, paras.identity, candidates)
+        dSin, dpath = scaffolding.dPaths(targetGraph, soap, fn=config.DPATH)
+        
+        # set gNodes
+        if paras.meanLen > 2000:
+            # the recovered contigs is reliable when the mean length is large
+            gNodes = targetGraph.vertices() | mappedNodes | candidates
+        else:
+            gNodes = targetGraph.vertices() | mappedNodes
+        logger.info('Finding done!\n')
+        
+        # second round of overlap graph construction
+        logger.info('Scaffolding ...')
+        logger.print_timestamp()
+        # two modules, including or not MDA scaffolds
+            # no mda scaffolds cluster, no addtional links
+        logger.info('Addtional links are included')
+        newlinks = paras.mappedLinks(soap.index, gNodes)
+        # filter the long MDA scaffolds, since they have tendency of errors
+        for ele in newlinks.keys():
+            if ele in paras.spa:
+                if paras.length[ele] >= config.MDAlenCf:
+                    del newlinks[ele]
+            elif ':' in ele:
+                info = ele.split(':')
+                accumLen = paras.length.get(info[1], 0)
+                accumLen += paras.length.get(info[3], 0)
+                if accumLen >= config.MDAlenCf:
+                    del newlinks[ele]
+        
+        walks = scaffolding.scafWalking(soap.index, newlinks, dpath)
+        # output sequences
+        scaffolds = scaffolding.serialization(soap, paras)
+        scaffolds.outSeqs(walks, gNodes, args.recoverSwith)
+        # report the assembly result
+        scaffolding.report()
+        logger.finish_up(check_test=False)
+    
+    return 1
+
+if __name__ == '__main__':
+    
+    try:
+        return_code = main()
+        exit(return_code)
+    except Exception:
+        _, exc_value, _ = sys.exc_info()
+        print('exception caught! {0}'.format(exc_value))
+
+

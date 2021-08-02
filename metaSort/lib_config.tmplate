@@ -1,0 +1,23 @@
+
+# library id, only accept intege
+LIB=1
+# single read length, only accept intege
+readLen=100
+# average insert length
+insertLen=180
+# read pair 1 path
+pair1=/panfs/home/jipfnew/histor/mock_test_metaSort/data/test_100_180_1.fq
+# read pair 2 path
+pair2=/panfs/home/jipfnew/histor/mock_test_metaSort/data/test_100_180_2.fq
+
+LIB=2
+# single read length, only accept intege
+readLen=150
+# average insert length
+insertLen=500
+# read pair 1 path
+pair1=/panfs/home/jipfnew/histor/mock_test_metaSort/data/test_150_500_1.fq
+# read pair 2 path
+pair2=/panfs/home/jipfnew/histor/mock_test_metaSort/data/test_150_500_2.fq
+
+

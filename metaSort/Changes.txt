@@ -1,0 +1,13 @@
+Changed log
+
+1.0  Fresh start on a new version
+
+1.01 Divde the main script into two models:fab and mga
+
+1.1  Add a new module, build, into metaSort
+     Accept assemblies from other metagenomic assemblers, such as metaSPAdes,IDBA-UD
+     Integrate the metaBAT software into the build module.
+
+1.2  Optimized the BAF algorithm and fixed some minor bugs.
+
+1.3 Fixed some minor bugs, including: g.contig problem.
